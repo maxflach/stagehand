@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    let updater = Updater()
     private var panel: NSWindow?
     private var statusMenu: StatusMenu?
 
@@ -31,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.mainMenu = buildMainMenu()
         model.launch()
-        statusMenu = StatusMenu(model: model) { [weak self] in self?.showPanel() }
+        statusMenu = StatusMenu(model: model, updater: updater) { [weak self] in self?.showPanel() }
         if !launchedFromURL { showPanel() }
     }
 
@@ -46,11 +47,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showPanel() {
         if panel == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 640),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.title = "Stagehand"
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.isMovableByWindowBackground = true
             window.isReleasedWhenClosed = false
+            // The live preview only runs while the panel can actually be seen.
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                                   object: window, queue: .main) { [weak self] note in
+                guard let window = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated { self?.model.setPreviewVisible(window.occlusionState.contains(.visible)) }
+            }
             window.contentView = NSHostingView(rootView: ControlPanel(model: model))
             window.setFrameAutosaveName("ControlPanel")
             if !window.setFrameUsingName("ControlPanel") { window.center() }
@@ -65,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Stagehand", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let check = appMenu.addItem(withTitle: "Check for Updates…", action: #selector(Updater.checkForUpdates(_:)), keyEquivalent: "")
+        check.target = updater
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Stagehand", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")

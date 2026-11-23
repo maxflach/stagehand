@@ -12,14 +12,14 @@ final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "com.musicdatalabs.stagehand.capture", qos: .userInteractive)
 
-    func start(filter: SCContentFilter, outputSize: CGSize) async throws {
+    func start(filter: SCContentFilter, outputSize: CGSize, fps: Int32 = 60) async throws {
         await stop()
         let config = SCStreamConfiguration()
         config.width = Int(outputSize.width)
         config.height = Int(outputSize.height)
         config.scalesToFit = true
         config.preservesAspectRatio = true
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.minimumFrameInterval = CMTime(value: 1, timescale: fps)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.colorSpaceName = CGColorSpace.sRGB
         config.showsCursor = true
