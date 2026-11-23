@@ -2,9 +2,11 @@ import CoreMedia
 import IOSurface
 import ScreenCaptureKit
 
-/// Streams one source with ScreenCaptureKit and hands each finished frame to `onFrame`.
+/// Streams one source with ScreenCaptureKit and hands each finished frame to `onFrame`, together with the
+/// size of the captured content. ScreenCaptureKit scales the content to fit but pins it to the top-left of
+/// the buffer, so the stage needs the real content size to centre it.
 final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
-    var onFrame: ((IOSurface) -> Void)?
+    var onFrame: ((IOSurface, CGSize?) -> Void)?
     var onStop: ((Error) -> Void)?
 
     private var stream: SCStream?
@@ -43,7 +45,12 @@ final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
               let pixelBuffer = buffer.imageBuffer,
               let surface = CVPixelBufferGetIOSurface(pixelBuffer)?.takeUnretainedValue()
         else { return }
-        DispatchQueue.main.async { [weak self] in self?.onFrame?(surface) }
+        var contentSize: CGSize?
+        if let dict = attachments.first?[.contentRect] as! CFDictionary?,
+           let rect = CGRect(dictionaryRepresentation: dict), rect.width > 0, rect.height > 0 {
+            contentSize = rect.size
+        }
+        DispatchQueue.main.async { [weak self] in self?.onFrame?(surface, contentSize) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {

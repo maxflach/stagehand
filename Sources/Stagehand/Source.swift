@@ -79,6 +79,7 @@ enum Source: Identifiable, Equatable {
                     && w.frame.width >= 120 && w.frame.height >= 80
                     && w.owningApplication != nil
                     && w.owningApplication?.processID != ownPID
+                    && isRegularApp(w.owningApplication?.processID)
             }
             .sorted { a, b in
                 let an = a.owningApplication?.applicationName ?? "", bn = b.owningApplication?.applicationName ?? ""
@@ -87,5 +88,12 @@ enum Source: Identifiable, Equatable {
             .map(Source.window)
 
         return (windows + displays, ownApp)
+    }
+
+    /// Only apps with a Dock icon. Skips background helpers such as JankyBorders, whose
+    /// outline windows around every app window would otherwise show up as nameless entries.
+    private static func isRegularApp(_ pid: pid_t?) -> Bool {
+        guard let pid else { return false }
+        return NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
     }
 }
