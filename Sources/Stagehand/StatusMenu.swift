@@ -47,8 +47,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                                 on: source.map { model.isOnStage($0) } ?? false)
                 entry.tag = index
                 entry.isEnabled = source != nil
-                entry.keyEquivalent = "\(index + 1)"
-                entry.keyEquivalentModifierMask = [.control, .option, .command]
+                setShortcut(entry, model.shortcut(.favorite(index)))
                 if let icon = source?.icon?.copy() as? NSImage {
                     icon.size = NSSize(width: 16, height: 16)
                     entry.image = icon
@@ -73,10 +72,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 icon.size = NSSize(width: 16, height: 16)
                 entry.image = icon
             }
-            if model.favorites.isEmpty, index < 9 {
-                entry.keyEquivalent = "\(index + 1)"
-                entry.keyEquivalentModifierMask = [.control, .option, .command]
-            }
+            if model.favorites.isEmpty, index < 9 { setShortcut(entry, model.shortcut(.favorite(index))) }
         }
 
         menu.addItem(.separator())
@@ -125,4 +121,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func toggleBreak() { model.breakEnd == nil ? model.startBreak() : model.stopBreak() }
     @objc private func showPanel() { openPanel() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    /// Shows a global shortcut next to a menu item. Only keys that type a single character can be shown.
+    private func setShortcut(_ item: NSMenuItem, _ combo: KeyCombo?) {
+        guard let combo, combo.keyLabel.count == 1 else { return }
+        item.keyEquivalent = combo.keyLabel.lowercased()
+        item.keyEquivalentModifierMask = combo.menuFlags
+    }
 }

@@ -2,14 +2,6 @@ import Carbon.HIToolbox
 
 /// Global shortcuts through Carbon's RegisterEventHotKey, which needs no Accessibility permission.
 final class Hotkeys {
-    struct Shortcut {
-        let keyCode: Int
-        let label: String
-    }
-
-    static let modifiers = UInt32(controlKey | optionKey | cmdKey)
-    static let modifierLabel = "⌃⌥⌘"
-
     private var refs: [EventHotKeyRef] = []
     private var actions: [UInt32: @MainActor () -> Void] = [:]
     private var handler: EventHandlerRef?
@@ -28,20 +20,26 @@ final class Hotkeys {
     }
 
     deinit {
-        refs.forEach { UnregisterEventHotKey($0) }
+        unregisterAll()
         if let handler { RemoveEventHandler(handler) }
     }
 
-    func register(_ keyCode: Int, action: @escaping @MainActor () -> Void) {
+    /// Returns false when the combination is taken, usually by another app.
+    @discardableResult
+    func register(_ combo: KeyCombo, action: @escaping @MainActor () -> Void) -> Bool {
         let id = UInt32(actions.count + 1)
         var ref: EventHotKeyRef?
         let hotKeyID = EventHotKeyID(signature: OSType(0x5354_4748), id: id) // "STGH"
-        guard RegisterEventHotKey(UInt32(keyCode), Self.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr,
-              let ref else { return }
+        guard RegisterEventHotKey(UInt32(combo.keyCode), combo.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr,
+              let ref else { return false }
         refs.append(ref)
         actions[id] = action
+        return true
     }
 
-    static let digitKeys = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
-                            kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+    func unregisterAll() {
+        refs.forEach { UnregisterEventHotKey($0) }
+        refs.removeAll()
+        actions.removeAll()
+    }
 }
