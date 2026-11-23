@@ -24,6 +24,31 @@ enum Source: Identifiable, Equatable {
         }
     }
 
+    var bundleID: String? {
+        if case .window(let w) = self { return w.owningApplication?.bundleIdentifier }
+        return nil
+    }
+
+    var appName: String {
+        switch self {
+        case .window(let w): return w.owningApplication?.applicationName ?? "Window"
+        case .display(_, let name): return name
+        }
+    }
+
+    /// Window title, or the display name for screens.
+    var rawTitle: String {
+        switch self {
+        case .window(let w): return w.title ?? ""
+        case .display(_, let name): return name
+        }
+    }
+
+    var windowID: CGWindowID? {
+        if case .window(let w) = self { return w.windowID }
+        return nil
+    }
+
     var icon: NSImage? {
         switch self {
         case .window(let w):
@@ -59,7 +84,14 @@ enum Source: Identifiable, Equatable {
     static func == (a: Source, b: Source) -> Bool { a.id == b.id }
 
     /// Lists shareable windows and screens, skipping Stagehand itself and the virtual display.
-    static func available(virtualDisplayID: CGDirectDisplayID?) async throws -> (sources: [Source], ownApp: SCRunningApplication?) {
+    struct Snapshot {
+        var sources: [Source]
+        var ownApp: SCRunningApplication?
+        /// The virtual display itself, for the control panel preview.
+        var stageDisplay: SCDisplay?
+    }
+
+    static func available(virtualDisplayID: CGDirectDisplayID?) async throws -> Snapshot {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let ownApp = content.applications.first { $0.processID == ownPID }
@@ -87,12 +119,13 @@ enum Source: Identifiable, Equatable {
             }
             .map(Source.window)
 
-        return (windows + displays, ownApp)
+        let stageDisplay = content.displays.first { $0.displayID == virtualDisplayID }
+        return Snapshot(sources: windows + displays, ownApp: ownApp, stageDisplay: stageDisplay)
     }
 
     /// Only apps with a Dock icon. Skips background helpers such as JankyBorders, whose
     /// outline windows around every app window would otherwise show up as nameless entries.
-    private static func isRegularApp(_ pid: pid_t?) -> Bool {
+    static func isRegularApp(_ pid: pid_t?) -> Bool {
         guard let pid else { return false }
         return NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
     }

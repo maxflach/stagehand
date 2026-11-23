@@ -6,10 +6,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private static let autosaveName = "StagehandStatus"
     private let model: AppModel
     private let openPanel: () -> Void
+    private let updater: Updater
     private let item: NSStatusItem
 
-    init(model: AppModel, openPanel: @escaping () -> Void) {
+    init(model: AppModel, updater: Updater, openPanel: @escaping () -> Void) {
         self.model = model
+        self.updater = updater
         self.openPanel = openPanel
         // New items appear next to the notch, where they can be hidden. On first launch, ask macOS to place
         // ours near the clock instead. The value is the distance from the right edge; the user can still ⌘-drag it.
@@ -35,7 +37,27 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let header = NSMenuItem(title: "Show on stage", action: nil, keyEquivalent: "")
+        if !model.favorites.isEmpty {
+            let favHeader = NSMenuItem(title: "Favourites", action: nil, keyEquivalent: "")
+            favHeader.isEnabled = false
+            menu.addItem(favHeader)
+            for (index, favorite) in model.favorites.enumerated() {
+                let source = model.resolve(favorite)
+                let entry = add(menu, source?.title ?? "\(favorite.label) (not open)", #selector(pickFavorite(_:)),
+                                on: source != nil && model.current == source)
+                entry.tag = index
+                entry.isEnabled = source != nil
+                entry.keyEquivalent = "\(index + 1)"
+                entry.keyEquivalentModifierMask = [.control, .option, .command]
+                if let icon = source?.icon?.copy() as? NSImage {
+                    icon.size = NSSize(width: 16, height: 16)
+                    entry.image = icon
+                }
+            }
+            menu.addItem(.separator())
+        }
+
+        let header = NSMenuItem(title: model.favorites.isEmpty ? "Show on stage" : "All windows", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         if model.sources.isEmpty {
@@ -51,13 +73,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 icon.size = NSSize(width: 16, height: 16)
                 entry.image = icon
             }
-            if index < 9 {
+            if model.favorites.isEmpty, index < 9 {
                 entry.keyEquivalent = "\(index + 1)"
                 entry.keyEquivalentModifierMask = [.control, .option, .command]
             }
         }
 
         menu.addItem(.separator())
+        add(menu, "Follow my focus", #selector(toggleFollow), on: model.follow)
         add(menu, "Webcam", #selector(toggleCamera), on: model.cameraOn)
         add(menu, "Spotlight", #selector(toggleSpotlight), on: model.spotlight)
         add(menu, "Highlight cursor", #selector(toggleHighlight), on: model.highlight)
@@ -65,6 +88,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         add(menu, "Control Panel…", #selector(showPanel))
+        let check = menu.addItem(withTitle: "Check for Updates…", action: #selector(Updater.checkForUpdates(_:)), keyEquivalent: "")
+        check.target = updater
         add(menu, "Quit Stagehand", #selector(quit))
 
         // Refresh in the background so the next open has new windows.
@@ -79,7 +104,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         return entry
     }
 
-    @objc private func pickSource(_ sender: NSMenuItem) { model.select(index: sender.tag) }
+    @objc private func pickSource(_ sender: NSMenuItem) {
+        if model.sources.indices.contains(sender.tag) { model.select(model.sources[sender.tag]) }
+    }
+    @objc private func pickFavorite(_ sender: NSMenuItem) { model.select(slot: sender.tag) }
+    @objc private func toggleFollow() { model.follow.toggle() }
     @objc private func toggleCamera() { model.setCamera(!model.cameraOn) }
     @objc private func toggleSpotlight() { model.spotlight.toggle() }
     @objc private func toggleHighlight() { model.highlight.toggle() }
