@@ -28,6 +28,8 @@ On first launch, allow **Screen Recording**, then reopen the app. Optional: **Ac
 
 ## Shortcuts
 
+These are the defaults. To change one, click **Shortcuts** in the control panel, click the shortcut and press the new keys. Delete removes a shortcut, **Reset to defaults** brings them all back.
+
 | Keys | Action |
 |---|---|
 | ⌃⌥⌘1 … 9 | Show favourite 1 to 9 (window list order if you have none) |

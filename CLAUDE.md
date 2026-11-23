@@ -8,4 +8,5 @@ macOS app (Swift, SwiftPM, no Xcode project). Virtual display + ScreenCaptureKit
 - Keep CPU low: stage capture is 30 fps, the panel preview only runs while the panel is visible, and avoid endless SwiftUI animations or shadows on live views (they redraw every frame).
 - Build: `./scripts/build.sh`. Release: bump Info.plist versions, merge to main, `./scripts/release.sh` (notarytool profile `musicdatalabs-notary`), then `gh release create` with the zip and appcast.xml.
 - Signing: "Developer ID Application: MusicData Labs Sweden AB (Q47N78X9DT)". Bundle id `com.musicdatalabs.stagehand`.
+- Global shortcuts: `ShortcutAction` (Shortcuts.swift) lists every action with its default; users rebind them in the Shortcuts sheet, and only changes are saved (UserDefaults `shortcuts`). Never hard-code a shortcut label in the UI, use `model.shortcutLabel(_:)`.
 - Branches: `develop` is the working branch, `main` is releases.
