@@ -22,9 +22,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasScreenAccess = CGPreflightScreenCaptureAccess()
     @Published private(set) var displayReady = false
 
-    @Published var spotlight = false
-    @Published var highlight = false
-    @Published var zoomOn = false
+    @Published var spotlight = false { didSet { updateTicker() } }
+    @Published var highlight = false { didSet { updateTicker() } }
+    @Published var zoomOn = false { didSet { updateTicker() } }
     @Published var zoomLevel: Double = UserDefaults.standard.object(forKey: "zoomLevel") as? Double ?? 2 {
         didSet { UserDefaults.standard.set(zoomLevel, forKey: "zoomLevel") }
     }
@@ -73,7 +73,9 @@ final class AppModel: ObservableObject {
     private let hotkeys = Hotkeys()
     private var ownApp: SCRunningApplication?
     private var ticker: Timer?
-    private var tick = 0
+    private var tickerFast = false
+    private var lastFrameCheck = Date.distantPast
+    private var lastSlowWork = Date.distantPast
     private var sourceFrames: [CGRect?] = [nil, nil]
     /// The source shown before `current`, used when side by side is switched on.
     private var previous: Source?
@@ -115,9 +117,7 @@ final class AppModel: ObservableObject {
         captures[1].onStop = { [weak self] _ in self?.paneStopped(1) }
 
         registerHotkeys()
-        ticker = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.onTick() }
-        }
+        startTicker(fast: false)
         Task { await refreshSources() }
     }
 
@@ -487,8 +487,26 @@ final class AppModel: ObservableObject {
 
     // MARK: Tick
 
+    /// Pointer effects need 30 updates a second to look smooth. Without them, 8 a second is enough to keep
+    /// the pointer off the virtual display and to drive follow mode and countdowns, at a fraction of the wakeups.
+    private var needsFastTick: Bool { spotlight || highlight || zoomOn || zoomScale != 1 }
+
+    private func updateTicker() {
+        if ticker != nil, needsFastTick != tickerFast { startTicker(fast: needsFastTick) }
+    }
+
+    private func startTicker(fast: Bool) {
+        ticker?.invalidate()
+        tickerFast = fast
+        let timer = Timer(timeInterval: fast ? 1.0 / 30 : 1.0 / 8, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onTick() }
+        }
+        timer.tolerance = fast ? 0.005 : 0.03 // lets macOS batch our wakeups with others
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
+    }
+
     private func onTick() {
-        tick += 1
         guard let display, let stage = stageWindow?.stage else { return }
         guard let cursor = CGEvent(source: nil)?.location else { return }
 
@@ -499,14 +517,23 @@ final class AppModel: ObservableObject {
         }
         lastPhysicalCursor = cursor
 
-        if tick % 3 == 0 {
+        let now = Date()
+        if now.timeIntervalSince(lastFrameCheck) >= 0.1 {
+            lastFrameCheck = now
             sourceFrames[0] = current?.currentFrame
             sourceFrames[1] = split ? secondary?.currentFrame : nil
             resizeCapturesIfNeeded()
         }
-        if tick % 8 == 0 {
+        if now.timeIntervalSince(lastSlowWork) >= 0.25 {
+            lastSlowWork = now
             updateCard()
             followTick()
+        }
+        // Zoom easing finished: the fast ticker can step down.
+        if tickerFast, !needsFastTick { updateTicker() }
+        guard tickerFast || zoomScale != 1 else {
+            stage.updateCursor(nil, spotlight: false, highlight: false)
+            return
         }
 
         // Map the pointer into whichever pane shows the window it is over.
