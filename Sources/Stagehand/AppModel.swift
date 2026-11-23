@@ -17,6 +17,18 @@ final class AppModel: ObservableObject {
     @Published var breakMinutes = 5
     @Published private(set) var breakEnd: Date?
 
+    /// Pinned sources; their order is the ⌃⌥⌘1–9 slot order.
+    @Published var favorites: [Favorite] = Favorite.load() {
+        didSet { Favorite.save(favorites) }
+    }
+    /// Follow mode: the stage shows whichever window you are working in.
+    @Published var follow = UserDefaults.standard.bool(forKey: "follow") {
+        didSet { UserDefaults.standard.set(follow, forKey: "follow") }
+    }
+
+    /// Live thumbnail of what the meeting sees, shown in the control panel.
+    let preview = PreviewView()
+
     private var display: VirtualDisplay?
     private var stageWindow: StageWindow?
     private let capture = CaptureEngine()
@@ -27,6 +39,19 @@ final class AppModel: ObservableObject {
     private var tick = 0
     private var sourceFrame: CGRect?
     private var lastPhysicalCursor: CGPoint?
+    private var favoriteWindowIDs: [UUID: CGWindowID] = [:]
+    private let previewCapture = CaptureEngine()
+    private var stageDisplay: SCDisplay?
+    private var previewWanted = false
+    private var previewRunning = false
+    private var followCandidate: CGWindowID?
+    private var lastFollowRefresh = Date.distantPast
+
+    /// Apps where the presenter looks at the call, not at what they share. Follow mode ignores them.
+    private static let meetingApps: Set<String> = [
+        "us.zoom.xos", "com.microsoft.teams2", "com.microsoft.teams", "com.tinyspeck.slackmacgap",
+        "com.cisco.webexmeetingsapp", "com.apple.FaceTime", "com.hnc.Discord",
+    ]
 
     func launch() {
         if !hasScreenAccess { CGRequestScreenCaptureAccess() }
@@ -43,6 +68,8 @@ final class AppModel: ObservableObject {
         attachStageWindow()
 
         capture.onFrame = { [weak self] surface, size in self?.stageWindow?.stage.show(frame: surface, contentSize: size) }
+        previewCapture.onFrame = { [weak self] surface, _ in self?.preview.show(surface) }
+        previewCapture.onStop = { [weak self] _ in self?.previewRunning = false }
         capture.onStop = { [weak self] _ in
             guard let self else { return }
             self.current = nil
@@ -51,7 +78,7 @@ final class AppModel: ObservableObject {
         }
 
         registerHotkeys()
-        ticker = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+        ticker = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.onTick() }
         }
         Task { await refreshSources() }
@@ -60,7 +87,10 @@ final class AppModel: ObservableObject {
     func shutdown() {
         ticker?.invalidate()
         camera.stop()
-        Task { await capture.stop() }
+        Task {
+            await capture.stop()
+            await previewCapture.stop()
+        }
     }
 
     // MARK: Stage window
@@ -90,21 +120,23 @@ final class AppModel: ObservableObject {
             let result = try await Source.available(virtualDisplayID: display?.displayID)
             sources = result.sources
             ownApp = result.ownApp
+            stageDisplay = result.stageDisplay
+            updatePreview()
             if status?.hasPrefix("Screen recording") == true { status = nil }
         } catch {
             status = "Screen recording access is needed. Allow Stagehand in System Settings, then reopen it."
         }
     }
 
-    func select(_ source: Source) {
+    func select(_ source: Source, focus: Bool = true) {
         if breakEnd != nil { stopBreak() }
         current = source
         sourceFrame = source.currentFrame
-        if case .window(let window) = source { WindowFocus.focus(window) }
+        if focus, case .window(let window) = source { WindowFocus.focus(window) }
         let filter = source.filter(excluding: ownApp)
         Task {
             do {
-                try await capture.start(filter: filter, outputSize: VirtualDisplay.size)
+                try await capture.start(filter: filter, outputSize: VirtualDisplay.size, fps: 30) // meeting apps send ≤30 fps
                 status = nil
             } catch {
                 status = "Could not capture \(source.title): \(error.localizedDescription)"
@@ -113,15 +145,127 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func select(index: Int) {
-        guard sources.indices.contains(index) else { return }
-        select(sources[index])
+    /// ⌃⌥⌘1–9: the favourite in that slot. Without favourites, the window list order as before.
+    func select(slot index: Int) {
+        if favorites.isEmpty {
+            if sources.indices.contains(index) { select(sources[index]) }
+            return
+        }
+        guard favorites.indices.contains(index) else { return }
+        let favorite = favorites[index]
+        // Refresh first: window titles change (browser tabs) and windows open and close, and a stale list
+        // can match the wrong window of an app that has several. Listing takes a few milliseconds.
+        Task {
+            await refreshSources()
+            if let source = resolve(favorite) { select(source) } else { status = "\(favorite.label) isn't open." ; NSSound.beep() }
+        }
     }
 
+    /// ⌃⌥⌘← / →: cycle through open favourites, or all sources when there are none.
     func step(_ delta: Int) {
-        guard !sources.isEmpty else { return }
-        let index = current.flatMap { sources.firstIndex(of: $0) } ?? -delta
-        select(index: (index + delta + sources.count) % sources.count)
+        let ring = favorites.isEmpty ? sources : favorites.compactMap { resolve($0) }
+        guard !ring.isEmpty else { return }
+        let index = current.flatMap { ring.firstIndex(of: $0) } ?? (delta > 0 ? -1 : 0)
+        select(ring[(index + delta + ring.count) % ring.count])
+    }
+
+    // MARK: Favourites
+
+    func resolve(_ favorite: Favorite) -> Source? {
+        let source = favorite.resolve(in: sources, lastWindowID: favoriteWindowIDs[favorite.id])
+        if let id = source?.windowID { favoriteWindowIDs[favorite.id] = id }
+        return source
+    }
+
+    func favorite(for source: Source) -> Favorite? {
+        favorites.first { fav in
+            if let id = favoriteWindowIDs[fav.id], let sid = source.windowID { return id == sid }
+            return fav.resolve(in: sources, lastWindowID: nil) == source
+        }
+    }
+
+    func toggleFavorite(_ source: Source) {
+        if let existing = favorite(for: source) {
+            favorites.removeAll { $0.id == existing.id }
+            favoriteWindowIDs[existing.id] = nil
+        } else if favorites.count < Favorite.maxCount {
+            let fav = Favorite(source)
+            favoriteWindowIDs[fav.id] = source.windowID
+            favorites.append(fav)
+        } else {
+            status = "All nine shortcut slots are taken. Remove a favourite first."
+        }
+    }
+
+    func removeFavorite(_ favorite: Favorite) {
+        favorites.removeAll { $0.id == favorite.id }
+        favoriteWindowIDs[favorite.id] = nil
+    }
+
+    func moveFavorites(from offsets: IndexSet, to destination: Int) {
+        favorites.move(fromOffsets: offsets, toOffset: destination)
+    }
+
+    // MARK: Preview
+
+    /// The control panel calls this when it becomes visible or hidden, so the preview only costs CPU when seen.
+    func setPreviewVisible(_ visible: Bool) {
+        previewWanted = visible
+        updatePreview()
+    }
+
+    private func updatePreview() {
+        if previewWanted, !previewRunning, let stageDisplay {
+            previewRunning = true
+            let filter = SCContentFilter(display: stageDisplay, excludingWindows: [])
+            Task {
+                do {
+                    try await previewCapture.start(filter: filter, outputSize: CGSize(width: 960, height: 540), fps: 15)
+                } catch {
+                    previewRunning = false
+                }
+            }
+        } else if !previewWanted, previewRunning {
+            previewRunning = false
+            Task { await previewCapture.stop() }
+        }
+    }
+
+    // MARK: Follow mode
+
+    /// Frontmost normal window of a regular app, from the window server's front-to-back order.
+    private func frontmostWindow() -> (id: CGWindowID, pid: pid_t)? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+                  let id = info[kCGWindowNumber as String] as? CGWindowID,
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                  bounds.width >= 120, bounds.height >= 80,
+                  Source.isRegularApp(pid)
+            else { continue }
+            return (id, pid)
+        }
+        return nil
+    }
+
+    private func followTick() {
+        guard follow, breakEnd == nil, let front = frontmostWindow() else { return }
+        if let bundle = NSRunningApplication(processIdentifier: front.pid)?.bundleIdentifier,
+           Self.meetingApps.contains(bundle) { return }
+        guard current?.windowID != front.id else { followCandidate = nil; return }
+        // Wait for the same window on two checks in a row, so ⌘-Tab passing through apps doesn't flicker.
+        guard followCandidate == front.id else { followCandidate = front.id; return }
+        followCandidate = nil
+        if let source = sources.first(where: { $0.windowID == front.id }) {
+            select(source, focus: false)
+        } else if Date().timeIntervalSince(lastFollowRefresh) > 1 {
+            lastFollowRefresh = Date()
+            Task { await refreshSources() } // a new window; picked up on the next check
+        }
     }
 
     // MARK: Overlays
@@ -180,8 +324,11 @@ final class AppModel: ObservableObject {
         }
         lastPhysicalCursor = cursor
 
-        if tick % 6 == 0 { sourceFrame = current?.currentFrame }
-        if tick % 15 == 0 { updateBreak() }
+        if tick % 3 == 0 { sourceFrame = current?.currentFrame }
+        if tick % 8 == 0 {
+            updateBreak()
+            followTick()
+        }
 
         var stagePoint: CGPoint?
         let fit = stage.contentFit
@@ -195,8 +342,9 @@ final class AppModel: ObservableObject {
     // MARK: Hotkeys
 
     static let shortcutHelp: [(String, String)] = [
-        ("\(Hotkeys.modifierLabel)1 … 9", "Show source 1 to 9"),
-        ("\(Hotkeys.modifierLabel)← / →", "Previous / next source"),
+        ("\(Hotkeys.modifierLabel)1 … 9", "Show favourite 1 to 9"),
+        ("\(Hotkeys.modifierLabel)← / →", "Previous / next favourite"),
+        ("\(Hotkeys.modifierLabel)F", "Follow mode on / off"),
         ("\(Hotkeys.modifierLabel)C", "Webcam on / off"),
         ("\(Hotkeys.modifierLabel)S", "Spotlight on / off"),
         ("\(Hotkeys.modifierLabel)H", "Highlight cursor on / off"),
@@ -206,7 +354,7 @@ final class AppModel: ObservableObject {
 
     private func registerHotkeys() {
         for (index, key) in Hotkeys.digitKeys.enumerated() {
-            hotkeys.register(key) { [weak self] in self?.select(index: index) }
+            hotkeys.register(key) { [weak self] in self?.select(slot: index) }
         }
         hotkeys.register(kVK_LeftArrow) { [weak self] in self?.step(-1) }
         hotkeys.register(kVK_RightArrow) { [weak self] in self?.step(1) }
@@ -217,6 +365,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.breakEnd == nil ? self.startBreak() : self.stopBreak()
         }
+        hotkeys.register(kVK_ANSI_F) { [weak self] in self?.follow.toggle() }
         hotkeys.register(kVK_ANSI_R) { [weak self] in Task { await self?.refreshSources() } }
     }
 }
