@@ -49,7 +49,7 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(lowerRole, forKey: "lowerRole"); updateLowerThird() }
     }
 
-    /// Pinned sources; their order is the ⌃⌥⌘1–9 slot order.
+    /// Pinned sources; their order is the favourite shortcut slot order.
     @Published var favorites: [Favorite] = Favorite.load() {
         didSet { Favorite.save(favorites) }
     }
@@ -277,7 +277,7 @@ final class AppModel: ObservableObject {
         Task { await refreshSources() }
     }
 
-    /// ⌃⌥⌘1–9: the favourite in that slot. Without favourites, the window list order as before.
+    /// Favourite shortcut 1–9: the favourite in that slot. Without favourites, the window list order as before.
     func select(slot index: Int) {
         if favorites.isEmpty {
             if sources.indices.contains(index) { select(sources[index]) }
@@ -293,7 +293,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// ⌃⌥⌘← / →: cycle through open favourites, or all sources when there are none.
+    /// Previous / next favourite: cycle through open favourites, or all sources when there are none.
     func step(_ delta: Int) {
         let ring = favorites.isEmpty ? sources : favorites.compactMap { resolve($0) }
         guard !ring.isEmpty else { return }
@@ -566,54 +566,86 @@ final class AppModel: ObservableObject {
 
     // MARK: Hotkeys
 
-    static let shortcutHelp: [(String, String)] = [
-        ("\(Hotkeys.modifierLabel)1 … 9", "Show favourite 1 to 9"),
-        ("\(Hotkeys.modifierLabel)← / →", "Previous / next favourite"),
-        ("\(Hotkeys.modifierLabel)D", "Side by side on / off"),
-        ("\(Hotkeys.modifierLabel)F", "Follow mode on / off"),
-        ("\(Hotkeys.modifierLabel)Z", "Zoom on / off"),
-        ("\(Hotkeys.modifierLabel)= / -", "Zoom in / out"),
-        ("\(Hotkeys.modifierLabel)S", "Spotlight on / off"),
-        ("\(Hotkeys.modifierLabel)H", "Highlight pointer on / off"),
-        ("\(Hotkeys.modifierLabel)C", "Webcam on / off"),
-        ("\(Hotkeys.modifierLabel)J", "Just me: webcam full screen"),
-        ("\(Hotkeys.modifierLabel)W", "Be right back card"),
-        ("\(Hotkeys.modifierLabel)B", "Start / stop break countdown"),
-        ("\(Hotkeys.modifierLabel)L", "Name and role on / off"),
-        ("\(Hotkeys.modifierLabel)R", "Refresh the window list"),
-    ]
+    /// The shortcut for each action; an action missing here has none.
+    @Published private(set) var shortcuts = ShortcutAction.load()
+    /// Actions whose shortcut another app already owns.
+    @Published private(set) var unavailableShortcuts: Set<ShortcutAction> = []
+    private var hotkeysPaused = false
+
+    func shortcut(_ action: ShortcutAction) -> KeyCombo? { shortcuts[action] }
+
+    /// The label for an action's shortcut, or nil when it has none.
+    func shortcutLabel(_ action: ShortcutAction) -> String? { shortcuts[action]?.label }
+
+    /// The shared modifiers ("⌃⌥⌘") when the favourite shortcuts are still the digits 1 to 9 with one
+    /// modifier set, so the panel can say "⌃⌥⌘ + number". Nil once they've been customised individually.
+    var favoriteModifiers: String? {
+        let combos = (0..<9).map { shortcuts[.favorite($0)] }
+        guard let first = combos[0], combos.enumerated().allSatisfy({ $1 == KeyCombo(ShortcutAction.favorite($0).defaultCombo.keyCode, modifiers: first.modifiers) })
+        else { return nil }
+        return first.modifierLabel
+    }
+
+    /// Assigns `combo` to `action`. Another action using the same combination loses it; the returned
+    /// message says which.
+    @discardableResult
+    func setShortcut(_ combo: KeyCombo?, for action: ShortcutAction) -> String? {
+        var message: String?
+        if let combo, let other = shortcuts.first(where: { $0.key != action && $0.value == combo })?.key {
+            shortcuts[other] = nil
+            message = "\(combo.label) was \u{201C}\(other.title)\u{201D}, which now has no shortcut."
+        }
+        shortcuts[action] = combo
+        ShortcutAction.save(shortcuts)
+        registerHotkeys()
+        return message
+    }
+
+    func resetShortcuts() {
+        shortcuts = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.map { ($0, $0.defaultCombo) })
+        ShortcutAction.save(shortcuts)
+        registerHotkeys()
+    }
+
+    /// While a shortcut is being recorded, the global ones are off, so pressing an existing one records it
+    /// instead of triggering it.
+    func pauseHotkeys(_ paused: Bool) {
+        hotkeysPaused = paused
+        registerHotkeys()
+    }
 
     private func registerHotkeys() {
-        for (index, key) in Hotkeys.digitKeys.enumerated() {
-            hotkeys.register(key) { [weak self] in self?.select(slot: index) }
+        hotkeys.unregisterAll()
+        guard !hotkeysPaused else { return }
+        var failed: Set<ShortcutAction> = []
+        for action in ShortcutAction.allCases {
+            guard let combo = shortcuts[action] else { continue }
+            if !hotkeys.register(combo, action: { [weak self] in self?.perform(action) }) { failed.insert(action) }
         }
-        hotkeys.register(kVK_LeftArrow) { [weak self] in self?.step(-1) }
-        hotkeys.register(kVK_RightArrow) { [weak self] in self?.step(1) }
-        hotkeys.register(kVK_ANSI_D) { [weak self] in self?.toggleSplit() }
-        hotkeys.register(kVK_ANSI_F) { [weak self] in self?.follow.toggle() }
-        hotkeys.register(kVK_ANSI_Z) { [weak self] in self?.zoomOn.toggle() }
-        hotkeys.register(kVK_ANSI_Equal) { [weak self] in
-            guard let self else { return }
-            self.zoomLevel = min(4, self.zoomLevel + 0.5)
-            self.zoomOn = true
+        unavailableShortcuts = failed
+    }
+
+    func perform(_ action: ShortcutAction) {
+        if let slot = action.favoriteSlot { select(slot: slot); return }
+        switch action {
+        case .previous: step(-1)
+        case .next: step(1)
+        case .refresh: Task { await refreshSources() }
+        case .split: toggleSplit()
+        case .follow: follow.toggle()
+        case .zoom: zoomOn.toggle()
+        case .zoomIn:
+            zoomLevel = min(4, zoomLevel + 0.5)
+            zoomOn = true
+        case .zoomOut: zoomLevel = max(1.5, zoomLevel - 0.5)
+        case .spotlight: spotlight.toggle()
+        case .highlight: highlight.toggle()
+        case .camera: setCamera(!cameraOn)
+        case .justMe: toggleJustMe()
+        case .beRightBack: card == .beRightBack ? hideCard() : showBeRightBack()
+        case .breakTime: breakEnd == nil ? startBreak() : stopBreak()
+        case .nameTag: lowerThirdOn.toggle()
+        default: break
         }
-        hotkeys.register(kVK_ANSI_Minus) { [weak self] in
-            guard let self else { return }
-            self.zoomLevel = max(1.5, self.zoomLevel - 0.5)
-        }
-        hotkeys.register(kVK_ANSI_S) { [weak self] in self?.spotlight.toggle() }
-        hotkeys.register(kVK_ANSI_H) { [weak self] in self?.highlight.toggle() }
-        hotkeys.register(kVK_ANSI_C) { [weak self] in guard let self else { return }; self.setCamera(!self.cameraOn) }
-        hotkeys.register(kVK_ANSI_J) { [weak self] in self?.toggleJustMe() }
-        hotkeys.register(kVK_ANSI_W) { [weak self] in
-            guard let self else { return }
-            self.card == .beRightBack ? self.hideCard() : self.showBeRightBack()
-        }
-        hotkeys.register(kVK_ANSI_B) { [weak self] in
-            guard let self else { return }
-            self.breakEnd == nil ? self.startBreak() : self.stopBreak()
-        }
-        hotkeys.register(kVK_ANSI_L) { [weak self] in self?.lowerThirdOn.toggle() }
-        hotkeys.register(kVK_ANSI_R) { [weak self] in Task { await self?.refreshSources() } }
     }
 }

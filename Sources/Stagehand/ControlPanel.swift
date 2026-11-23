@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import SwiftUI
 
 // MARK: Palette (matches the app icon: indigo stage, warm spotlight)
@@ -81,7 +82,7 @@ struct ControlPanel: View {
                     .overlay(Capsule().stroke(Palette.cardStroke))
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showShortcuts, arrowEdge: .top) { ShortcutSheet() }
+            .popover(isPresented: $showShortcuts, arrowEdge: .top) { ShortcutSheet(model: model) }
         }
     }
 }
@@ -307,6 +308,15 @@ private struct OptionsHeader: View {
 
 private struct ZoomOptions: View {
     @ObservedObject var model: AppModel
+
+    private var zoomHelp: String {
+        var parts: [String] = []
+        if let toggle = model.shortcutLabel(.zoom) { parts.append("\(toggle) turns zoom on and off.") }
+        let zoomIn = model.shortcutLabel(.zoomIn), zoomOut = model.shortcutLabel(.zoomOut)
+        if let zoomIn, let zoomOut { parts.append("\(zoomIn) and \(zoomOut) change the level.") }
+        parts.append("The view follows your pointer.")
+        return parts.joined(separator: " ")
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             OptionsHeader(title: "Zoom")
@@ -315,7 +325,7 @@ private struct ZoomOptions: View {
                 Slider(value: $model.zoomLevel, in: 1.5...4, step: 0.5)
                 Text("4×").font(.caption)
             }
-            Text("⌃⌥⌘Z turns zoom on and off, ⌃⌥⌘= and ⌃⌥⌘- change the level. The view follows your pointer.")
+            Text(zoomHelp)
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -413,7 +423,7 @@ private struct SourcesColumn: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "Favourites", detail: "⌃⌥⌘ + number")
+            SectionHeader(title: "Favourites", detail: model.favoriteModifiers.map { "\($0) + number" })
             FavoritesList(model: model)
 
             HStack {
@@ -428,7 +438,7 @@ private struct SourcesColumn: View {
                         .background(Circle().fill(Palette.card))
                 }
                 .buttonStyle(.plain)
-                .help("Refresh (⌃⌥⌘R)")
+                .help(model.shortcutLabel(.refresh).map { "Refresh (\($0))" } ?? "Refresh")
             }
             ScrollView {
                 LazyVStack(spacing: 6) {
@@ -470,7 +480,8 @@ private struct FavoritesList: View {
         if model.favorites.isEmpty {
             HStack(spacing: 10) {
                 Image(systemName: "star.fill").foregroundStyle(Palette.gold)
-                Text("Star windows below to pin them to ⌃⌥⌘1–9. Drag to reorder.")
+                Text(model.favoriteModifiers.map { "Star windows below to pin them to \($0)1–9. Drag to reorder." }
+                     ?? "Star windows below to give them a shortcut. Drag to reorder.")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
@@ -612,15 +623,107 @@ private struct SlotBadge: View {
 }
 
 private struct ShortcutSheet: View {
+    @ObservedObject var model: AppModel
+    @State private var recording: ShortcutAction?
+    @State private var monitor: Any?
+    @State private var hint: String?
+
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
-            ForEach(AppModel.shortcutHelp, id: \.0) { keys, text in
-                GridRow {
-                    Text(keys).font(.system(.callout, design: .monospaced).weight(.semibold))
-                    Text(text).font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Shortcuts").font(.system(.headline, design: .rounded))
+                Spacer()
+                Button("Reset to defaults") {
+                    stopRecording()
+                    model.resetShortcuts()
+                    hint = nil
                 }
             }
+            Text(hint ?? "Click a shortcut, then press the new keys. Delete removes it, Esc cancels.")
+                .font(.caption)
+                .foregroundStyle(hint == nil ? Color.secondary : Palette.coral)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
+                    ForEach(ShortcutAction.groups, id: \.self) { group in
+                        GridRow {
+                            Text(group.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 8)
+                                .gridCellColumns(2)
+                        }
+                        ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
+                            GridRow {
+                                Text(action.title).font(.callout)
+                                recorder(for: action).gridColumnAlignment(.trailing)
+                            }
+                        }
+                    }
+                }
+                .padding(.trailing, 4)
+            }
+            .frame(height: 460)
         }
         .padding(16)
+        .frame(width: 400)
+        .onDisappear { stopRecording() }
+    }
+
+    private func recorder(for action: ShortcutAction) -> some View {
+        let isRecording = recording == action
+        let taken = model.unavailableShortcuts.contains(action)
+        let label = isRecording ? "Press keys…" : (model.shortcutLabel(action) ?? "None")
+        return Button { isRecording ? stopRecording() : startRecording(action) } label: {
+            Text(label)
+                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                .foregroundStyle(taken ? Palette.coral : (model.shortcut(action) == nil && !isRecording ? .secondary : .primary))
+                .strikethrough(taken)
+                .frame(minWidth: 96)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 8)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(isRecording ? Palette.violet.opacity(0.45) : Color.white.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(isRecording ? Palette.violet : Color.clear, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .help(taken ? "Another app already uses this shortcut, so it does nothing. Pick another one." : "Click to change")
+    }
+
+    private func startRecording(_ action: ShortcutAction) {
+        stopRecording()
+        recording = action
+        hint = nil
+        model.pauseHotkeys(true)
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let strong: NSEvent.ModifierFlags = [.command, .control, .option]
+            let plain = event.modifierFlags.intersection(strong).isEmpty
+            switch Int(event.keyCode) {
+            case kVK_Escape where plain:
+                stopRecording()
+            case kVK_Delete where plain, kVK_ForwardDelete where plain:
+                model.setShortcut(nil, for: action)
+                stopRecording()
+            default:
+                let combo = KeyCombo(event: event)
+                guard combo.isUsable else {
+                    hint = "Add ⌘, ⌃ or ⌥ to the key (F-keys work on their own)."
+                    return nil
+                }
+                hint = model.setShortcut(combo, for: action)
+                stopRecording()
+            }
+            return nil // the key press only sets the shortcut
+        }
+    }
+
+    private func stopRecording() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        if recording != nil {
+            recording = nil
+            model.pauseHotkeys(false)
+        }
     }
 }
