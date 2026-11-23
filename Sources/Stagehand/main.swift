@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showPanel() {
         if panel == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 640),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 740),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.title = "Stagehand"
