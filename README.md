@@ -11,7 +11,11 @@ Stagehand creates a virtual display named **Stagehand**. Share that display once
 - **Favourites:** star the windows you present from and they get fixed shortcuts, ⌃⌥⌘1 to 9. Drag to reorder. They're remembered by app and window title, so they survive restarts.
 - **Follow:** the stage shows whichever window you're working in. Meeting apps are ignored, so checking the chat doesn't switch what you share.
 - **Focus:** picking a window also brings it to the front, so you work in the window everyone sees.
-- **Overlays:** your webcam in a corner bubble, a spotlight that dims everything except the area around the pointer, a highlight ring around the pointer, and a full-screen break countdown.
+- **Side by side:** two windows on stage at once, your last two picks. Right-click a window to put it on the right.
+- **Zoom:** magnify the area around the pointer (1.5× to 4×) for small text; the view glides along with the pointer.
+- **Webcam:** a bubble in any corner, three sizes, circle or rounded square, or full screen ("Just me"). Background blur and Studio Light come from macOS's own camera effects.
+- **Pointer effects:** a spotlight that dims everything except the area around the pointer, and a highlight ring.
+- **Title cards:** "Be right back", "Starting soon" with a countdown to a set time, a break countdown, and a name tag with your name and role.
 - **Updates:** Stagehand checks for new versions once a day and updates itself.
 
 ![What the meeting sees, with the spotlight on](docs/stage.png)
@@ -28,11 +32,17 @@ On first launch, allow **Screen Recording**, then reopen the app. Optional: **Ac
 |---|---|
 | ⌃⌥⌘1 … 9 | Show favourite 1 to 9 (window list order if you have none) |
 | ⌃⌥⌘← / → | Previous / next favourite |
+| ⌃⌥⌘D | Side by side on / off |
 | ⌃⌥⌘F | Follow mode on / off |
-| ⌃⌥⌘C | Webcam on / off |
+| ⌃⌥⌘Z | Zoom on / off |
+| ⌃⌥⌘= / - | Zoom in / out |
 | ⌃⌥⌘S | Spotlight on / off |
 | ⌃⌥⌘H | Highlight pointer on / off |
+| ⌃⌥⌘C | Webcam on / off |
+| ⌃⌥⌘J | Just me: webcam full screen |
+| ⌃⌥⌘W | Be right back card |
 | ⌃⌥⌘B | Start / stop break countdown |
+| ⌃⌥⌘L | Name tag on / off |
 | ⌃⌥⌘R | Refresh the window list |
 
 ## Build

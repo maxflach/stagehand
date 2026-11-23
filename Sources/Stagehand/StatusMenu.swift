@@ -44,7 +44,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             for (index, favorite) in model.favorites.enumerated() {
                 let source = model.resolve(favorite)
                 let entry = add(menu, source?.title ?? "\(favorite.label) (not open)", #selector(pickFavorite(_:)),
-                                on: source != nil && model.current == source)
+                                on: source.map { model.isOnStage($0) } ?? false)
                 entry.tag = index
                 entry.isEnabled = source != nil
                 entry.keyEquivalent = "\(index + 1)"
@@ -67,7 +67,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             menu.addItem(empty)
         }
         for (index, source) in model.sources.enumerated() {
-            let entry = add(menu, source.title, #selector(pickSource(_:)), on: model.current == source)
+            let entry = add(menu, source.title, #selector(pickSource(_:)), on: model.isOnStage(source))
             entry.tag = index
             if let icon = source.icon?.copy() as? NSImage {
                 icon.size = NSSize(width: 16, height: 16)
@@ -81,10 +81,15 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         add(menu, "Follow my focus", #selector(toggleFollow), on: model.follow)
+        add(menu, "Side by side", #selector(toggleSplit), on: model.split)
+        add(menu, "Zoom", #selector(toggleZoom), on: model.zoomOn)
         add(menu, "Webcam", #selector(toggleCamera), on: model.cameraOn)
+        add(menu, "Just me (webcam full screen)", #selector(toggleJustMe), on: model.cameraOn && model.cameraStyle.fullScreen)
         add(menu, "Spotlight", #selector(toggleSpotlight), on: model.spotlight)
         add(menu, "Highlight cursor", #selector(toggleHighlight), on: model.highlight)
         add(menu, model.breakEnd == nil ? "Start \(model.breakMinutes) min break" : "End break", #selector(toggleBreak))
+        add(menu, "Be right back", #selector(toggleBRB), on: model.card == .beRightBack)
+        add(menu, "Name tag", #selector(toggleLowerThird), on: model.lowerThirdOn)
 
         menu.addItem(.separator())
         add(menu, "Control Panel…", #selector(showPanel))
@@ -109,6 +114,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
     @objc private func pickFavorite(_ sender: NSMenuItem) { model.select(slot: sender.tag) }
     @objc private func toggleFollow() { model.follow.toggle() }
+    @objc private func toggleSplit() { model.toggleSplit() }
+    @objc private func toggleZoom() { model.zoomOn.toggle() }
+    @objc private func toggleJustMe() { model.toggleJustMe() }
+    @objc private func toggleBRB() { model.card == .beRightBack ? model.hideCard() : model.showBeRightBack() }
+    @objc private func toggleLowerThird() { model.lowerThirdOn.toggle() }
     @objc private func toggleCamera() { model.setCamera(!model.cameraOn) }
     @objc private func toggleSpotlight() { model.spotlight.toggle() }
     @objc private func toggleHighlight() { model.highlight.toggle() }
