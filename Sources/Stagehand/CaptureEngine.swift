@@ -2,14 +2,35 @@ import CoreMedia
 import IOSurface
 import ScreenCaptureKit
 
-/// Streams one source with ScreenCaptureKit and hands each finished frame to `onFrame`, together with the
-/// size of the captured content. ScreenCaptureKit scales the content to fit but pins it to the top-left of
-/// the buffer, so the stage needs the real content size to centre it.
+/// Streams one source with ScreenCaptureKit and hands each finished frame to `onFrame`.
+///
+/// The output size should match the source's aspect ratio (see `fittedSize`). ScreenCaptureKit pads
+/// mismatched content, and where it puts the padding differs between windows (top-left) and screens
+/// (centred), so matching the aspect avoids padding instead of guessing its position.
 final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     var onFrame: ((IOSurface, CGSize?) -> Void)?
     var onStop: ((Error) -> Void)?
 
     private var stream: SCStream?
+    private var config: SCStreamConfiguration?
+    private(set) var outputSize: CGSize = .zero
+
+    /// The largest size with `aspect` that fits in `box`, rounded to even pixels.
+    static func fittedSize(aspect: CGSize, in box: CGSize) -> CGSize {
+        guard aspect.width > 0, aspect.height > 0 else { return box }
+        let scale = min(box.width / aspect.width, box.height / aspect.height)
+        return CGSize(width: max(2, (aspect.width * scale / 2).rounded() * 2),
+                      height: max(2, (aspect.height * scale / 2).rounded() * 2))
+    }
+
+    /// Changes the output size of the running stream, e.g. after the window was resized.
+    func resize(to size: CGSize) async {
+        guard let stream, let config, size != outputSize else { return }
+        outputSize = size
+        config.width = Int(size.width)
+        config.height = Int(size.height)
+        try? await stream.updateConfiguration(config)
+    }
     private let queue = DispatchQueue(label: "com.musicdatalabs.stagehand.capture", qos: .userInteractive)
 
     func start(filter: SCContentFilter, outputSize: CGSize, fps: Int32 = 60) async throws {
@@ -25,6 +46,8 @@ final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         config.showsCursor = true
         config.queueDepth = 6
 
+        self.config = config
+        self.outputSize = outputSize
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
