@@ -2,7 +2,7 @@
 
 Share one screen in Teams, Zoom, Meet or Slack, then change what it shows with a keystroke, without stopping the share.
 
-![The Stagehand control panel](docs/control-panel.png)
+![The Stagehand control panel](docs/control-panel.jpg)
 
 ## How it works
 
