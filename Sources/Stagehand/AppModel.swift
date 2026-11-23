@@ -42,7 +42,7 @@ final class AppModel: ObservableObject {
         }
         attachStageWindow()
 
-        capture.onFrame = { [weak self] surface in self?.stageWindow?.stage.show(frame: surface) }
+        capture.onFrame = { [weak self] surface, size in self?.stageWindow?.stage.show(frame: surface, contentSize: size) }
         capture.onStop = { [weak self] _ in
             guard let self else { return }
             self.current = nil
@@ -100,6 +100,7 @@ final class AppModel: ObservableObject {
         if breakEnd != nil { stopBreak() }
         current = source
         sourceFrame = source.currentFrame
+        if case .window(let window) = source { WindowFocus.focus(window) }
         let filter = source.filter(excluding: ownApp)
         Task {
             do {
@@ -183,8 +184,8 @@ final class AppModel: ObservableObject {
         if tick % 15 == 0 { updateBreak() }
 
         var stagePoint: CGPoint?
-        if let frame = sourceFrame, frame.width > 0, frame.height > 0, frame.contains(cursor) {
-            let fit = AVMakeRect(aspectRatio: frame.size, insideRect: stage.bounds)
+        let fit = stage.contentFit
+        if let frame = sourceFrame, frame.width > 0, frame.height > 0, fit.width > 0, frame.contains(cursor) {
             stagePoint = CGPoint(x: fit.minX + (cursor.x - frame.minX) / frame.width * fit.width,
                                  y: fit.minY + (cursor.y - frame.minY) / frame.height * fit.height)
         }

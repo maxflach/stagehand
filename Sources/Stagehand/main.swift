@@ -5,6 +5,25 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var panel: NSWindow?
+    private var statusMenu: StatusMenu?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
+                                                     forEventClass: AEEventClass(kInternetEventClass),
+                                                     andEventID: AEEventID(kAEGetURL))
+    }
+
+    /// `stagehand://menu` opens the Stagehand menu at the pointer; any other stagehand:// URL shows the control panel.
+    @objc private func handleURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        let url = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue.flatMap(URL.init(string:))
+        launchedFromURL = true
+        // Let launch finish before showing anything.
+        DispatchQueue.main.async {
+            if url?.host == "menu" { self.statusMenu?.popUpAtPointer() } else { self.showPanel() }
+        }
+    }
+
+    private var launchedFromURL = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--write-icon"), let dir = CommandLine.arguments.last {
@@ -12,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.mainMenu = buildMainMenu()
         model.launch()
-        showPanel()
+        statusMenu = StatusMenu(model: model) { [weak self] in self?.showPanel() }
+        if !launchedFromURL { showPanel() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

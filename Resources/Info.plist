@@ -28,6 +28,17 @@
     <string>© 2026 MusicData Labs Sweden AB</string>
     <key>NSCameraUsageDescription</key>
     <string>Stagehand shows your webcam on top of what you share.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.musicdatalabs.stagehand</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>stagehand</string>
+            </array>
+        </dict>
+    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

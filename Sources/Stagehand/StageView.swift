@@ -2,7 +2,8 @@ import AVFoundation
 import AppKit
 import QuartzCore
 
-/// What the meeting sees: the captured source with overlays on top. Layer coordinates are top-left based.
+/// What the meeting sees: the captured source with overlays on top.
+/// Layers use AppKit's default bottom-left origin; cursor points arrive top-left based and are converted here.
 final class StageView: NSView {
     private let content = CALayer()
     private let placeholder = CATextLayer()
@@ -22,7 +23,6 @@ final class StageView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         let root = CALayer()
-        root.isGeometryFlipped = true
         root.backgroundColor = NSColor.black.cgColor
         layer = root
         wantsLayer = true
@@ -76,22 +76,33 @@ final class StageView: NSView {
         super.layout()
         withoutAnimation {
             let b = bounds
-            content.frame = b
+            if content.contents == nil { content.frame = b }
             placeholder.frame = CGRect(x: 0, y: b.midY - 24, width: b.width, height: 48)
             breakBackground.frame = b
-            breakTitle.frame = CGRect(x: 0, y: b.midY - 200, width: b.width, height: 70)
-            breakClock.frame = CGRect(x: 0, y: b.midY - 110, width: b.width, height: 260)
+            breakTitle.frame = CGRect(x: 0, y: b.midY + 130, width: b.width, height: 70)
+            breakClock.frame = CGRect(x: 0, y: b.midY - 150, width: b.width, height: 260)
             let d = Self.cameraDiameter
-            cameraFrame.frame = CGRect(x: b.maxX - d - Self.margin, y: b.maxY - d - Self.margin, width: d, height: d)
+            cameraFrame.frame = CGRect(x: b.maxX - d - Self.margin, y: Self.margin, width: d, height: d) // bottom right
             cameraLayer?.frame = cameraFrame.bounds
         }
     }
 
     // MARK: Content
 
-    func show(frame surface: IOSurface) {
+    /// Where the shared content sits on the stage, top-left based. The spotlight maps the cursor into this.
+    private(set) var contentFit: CGRect = .zero
+
+    /// `contentSize` is the captured content inside the buffer; only its aspect ratio is used.
+    func show(frame surface: IOSurface, contentSize: CGSize?) {
+        let b = bounds
+        let aspect = contentSize ?? b.size
+        let fit = AVMakeRect(aspectRatio: aspect, insideRect: b).integral
+        contentFit = fit
         withoutAnimation {
             content.contents = surface
+            // The buffer is stage-sized with the content pinned to its top-left corner (padding right and
+            // bottom). Shift the whole layer so that corner lands on the centred fit rect.
+            content.frame = CGRect(x: fit.minX, y: -fit.minY, width: b.width, height: b.height)
             placeholder.isHidden = true
         }
     }
@@ -99,6 +110,8 @@ final class StageView: NSView {
     func clear(message: String) {
         withoutAnimation {
             content.contents = nil
+            content.frame = bounds
+            contentFit = .zero
             placeholder.string = message
             placeholder.isHidden = false
         }
@@ -107,7 +120,8 @@ final class StageView: NSView {
     // MARK: Cursor effects
 
     /// `point` is in stage coordinates, nil when the cursor is outside the shared source.
-    func updateCursor(_ point: CGPoint?, spotlight: Bool, highlight: Bool) {
+    func updateCursor(_ topLeftPoint: CGPoint?, spotlight: Bool, highlight: Bool) {
+        let point = topLeftPoint.map { CGPoint(x: $0.x, y: bounds.height - $0.y) }
         withoutAnimation {
             dim.isHidden = !spotlight
             if spotlight {
