@@ -56,6 +56,7 @@ struct ControlPanel: View {
                     .lineLimit(2)
                     .transition(.opacity)
             }
+            PowerSwitch(model: model)
         }
     }
 
@@ -121,6 +122,9 @@ private struct StageCard: View {
                 PreviewRepresentable(view: model.preview)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay {
+                        if !model.isOn { OffNotice(model: model) }
+                    }
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(model.current == nil ? Palette.cardStroke : Palette.coral.opacity(0.7), lineWidth: 2)
@@ -129,7 +133,11 @@ private struct StageCard: View {
             }
 
             HStack(spacing: 8) {
-                if let current = model.current {
+                if !model.isOn {
+                    Text("Off: nothing is captured and the Stagehand screen is gone.")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.6))
+                } else if let current = model.current {
                     OnAirBadge()
                     if let icon = current.icon {
                         Image(nsImage: icon).resizable().frame(width: 22, height: 22)
@@ -147,6 +155,60 @@ private struct StageCard: View {
                 Spacer()
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.current?.id)
+        }
+    }
+}
+
+private struct PowerSwitch: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Button { model.toggleOn() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "power")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(model.isOn ? Palette.deep : .white.opacity(0.7))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(model.isOn ? AnyShapeStyle(Palette.mint) : AnyShapeStyle(Color.white.opacity(0.1))))
+                Text(model.isOn ? "On" : "Off")
+                    .font(.system(.callout, design: .rounded).weight(.bold))
+                    .frame(minWidth: 26, alignment: .leading)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 12)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(model.isOn ? Palette.mint.opacity(0.16) : Palette.card))
+            .overlay(Capsule().stroke(model.isOn ? Palette.mint.opacity(0.6) : Palette.cardStroke))
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: model.isOn)
+        }
+        .buttonStyle(.plain)
+        .help(model.shortcutLabel(.power).map { "Turn Stagehand on or off (\($0))" } ?? "Turn Stagehand on or off")
+        .contextMenu {
+            Toggle("Turn off when the screen locks", isOn: $model.offWhenLocked)
+        }
+    }
+}
+
+private struct OffNotice: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.75))
+            VStack(spacing: 12) {
+                Image(systemName: "power").font(.system(size: 30, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+                Text("Stagehand is off").font(.system(.title3, design: .rounded).weight(.bold))
+                Text("Turn it on before you share. Picking a window turns it on too.")
+                    .font(.callout).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center)
+                Button("Turn on") { model.setOn(true) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Palette.mint)
+                Toggle("Turn off when the screen locks", isOn: $model.offWhenLocked)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            .padding(20)
         }
     }
 }

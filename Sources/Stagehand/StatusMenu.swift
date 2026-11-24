@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// Menu bar icon with the source list and overlay toggles.
 @MainActor
@@ -8,6 +9,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let openPanel: () -> Void
     private let updater: Updater
     private let item: NSStatusItem
+    private var powerWatch: AnyCancellable?
 
     init(model: AppModel, updater: Updater, openPanel: @escaping () -> Void) {
         self.model = model
@@ -22,10 +24,17 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         item.autosaveName = Self.autosaveName
-        item.button?.image = NSImage(systemSymbolName: "theatermasks.fill", accessibilityDescription: "Stagehand")
+        powerWatch = model.$isOn.sink { [weak self] on in self?.updateIcon(on: on) }
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
+    }
+
+    /// Filled masks while on, outlined and dimmed while off.
+    private func updateIcon(on: Bool) {
+        item.button?.image = NSImage(systemSymbolName: on ? "theatermasks.fill" : "theatermasks",
+                                     accessibilityDescription: on ? "Stagehand (on)" : "Stagehand (off)")
+        item.button?.appearsDisabled = !on
     }
 
     /// Opens the same menu at the pointer, for bars that replace the native menu bar (SketchyBar).
@@ -36,6 +45,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        let power = add(menu, model.isOn ? "Stagehand is on" : "Stagehand is off", #selector(togglePower), on: model.isOn)
+        setShortcut(power, model.shortcut(.power))
+        add(menu, "Turn off when the screen locks", #selector(toggleOffWhenLocked), on: model.offWhenLocked)
+        menu.addItem(.separator())
 
         if !model.favorites.isEmpty {
             let favHeader = NSMenuItem(title: "Favourites", action: nil, keyEquivalent: "")
@@ -109,6 +123,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         if model.sources.indices.contains(sender.tag) { model.select(model.sources[sender.tag]) }
     }
     @objc private func pickFavorite(_ sender: NSMenuItem) { model.select(slot: sender.tag) }
+    @objc private func togglePower() { model.toggleOn() }
+    @objc private func toggleOffWhenLocked() { model.offWhenLocked.toggle() }
     @objc private func toggleFollow() { model.follow.toggle() }
     @objc private func toggleSplit() { model.toggleSplit() }
     @objc private func toggleZoom() { model.zoomOn.toggle() }
