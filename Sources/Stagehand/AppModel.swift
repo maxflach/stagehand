@@ -21,8 +21,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var status: String?
     @Published private(set) var hasScreenAccess = CGPreflightScreenCaptureAccess()
     @Published private(set) var displayReady = false
-    /// Off means nothing is captured and the Stagehand display is gone, so macOS has no recording to warn about.
-    @Published private(set) var isOn = UserDefaults.standard.object(forKey: "isOn") as? Bool ?? true
+    /// Off means nothing is captured and the Stagehand display is gone, so macOS has no recording to warn about
+    /// and the battery isn't spent on capturing. Stagehand always starts off; picking a window turns it on.
+    @Published private(set) var isOn = false
     @Published var offWhenLocked = UserDefaults.standard.object(forKey: "offWhenLocked") as? Bool ?? true {
         didSet { UserDefaults.standard.set(offWhenLocked, forKey: "offWhenLocked") }
     }
@@ -124,7 +125,7 @@ final class AppModel: ObservableObject {
         captures[1].onStop = { [weak self] _ in self?.paneStopped(1) }
 
         registerHotkeys()
-        if isOn { powerOn() }
+        UserDefaults.standard.set(false, forKey: "isOn") // starts off; keeps the SketchyBar item in step
         Task { await refreshSources() }
     }
 
@@ -135,7 +136,7 @@ final class AppModel: ObservableObject {
     func setOn(_ on: Bool) {
         guard on != isOn else { return }
         isOn = on
-        UserDefaults.standard.set(on, forKey: "isOn")
+        UserDefaults.standard.set(on, forKey: "isOn") // read by the SketchyBar item
         on ? powerOn() : powerOff()
     }
 
