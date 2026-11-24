@@ -21,6 +21,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var status: String?
     @Published private(set) var hasScreenAccess = CGPreflightScreenCaptureAccess()
     @Published private(set) var displayReady = false
+    /// Off means nothing is captured and the Stagehand display is gone, so macOS has no recording to warn about.
+    @Published private(set) var isOn = UserDefaults.standard.object(forKey: "isOn") as? Bool ?? true
+    @Published var offWhenLocked = UserDefaults.standard.object(forKey: "offWhenLocked") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(offWhenLocked, forKey: "offWhenLocked") }
+    }
 
     @Published var spotlight = false { didSet { updateTicker() } }
     @Published var highlight = false { didSet { updateTicker() } }
@@ -100,16 +105,18 @@ final class AppModel: ObservableObject {
     func launch() {
         if !hasScreenAccess { CGRequestScreenCaptureAccess() }
 
-        guard let display = VirtualDisplay() else {
-            status = "Could not create the virtual display."
-            return
-        }
-        self.display = display
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.attachStageWindow() }
         }
-        attachStageWindow()
+        // Stop capturing while locked: macOS warns about apps recording the screen when you unlock.
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"),
+                                                            object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.offWhenLocked, self.isOn else { return }
+                self.setOn(false)
+            }
+        }
 
         previewCapture.onFrame = { [weak self] surface, _ in self?.preview.show(surface) }
         previewCapture.onStop = { [weak self] _ in self?.previewRunning = false }
@@ -117,8 +124,55 @@ final class AppModel: ObservableObject {
         captures[1].onStop = { [weak self] _ in self?.paneStopped(1) }
 
         registerHotkeys()
-        startTicker(fast: false)
+        if isOn { powerOn() }
         Task { await refreshSources() }
+    }
+
+    // MARK: On / off
+
+    func toggleOn() { setOn(!isOn) }
+
+    func setOn(_ on: Bool) {
+        guard on != isOn else { return }
+        isOn = on
+        UserDefaults.standard.set(on, forKey: "isOn")
+        on ? powerOn() : powerOff()
+    }
+
+    private func powerOn() {
+        guard display == nil else { return }
+        guard let display = VirtualDisplay() else {
+            status = "Could not create the virtual display."
+            return
+        }
+        self.display = display
+        attachStageWindow()
+        startTicker(fast: needsFastTick)
+        // Put back what was on stage before turning off.
+        if current != nil {
+            startCapture(pane: 0)
+            if split { startCapture(pane: 1) }
+        }
+        Task { await refreshSources() } // finds the new display for the preview
+    }
+
+    private func powerOff() {
+        ticker?.invalidate()
+        ticker = nil
+        camera.stop()
+        cameraOn = false
+        previewRunning = false
+        let engines = captures + [previewCapture]
+        Task { for engine in engines { await engine.stop() } }
+        stageWindow?.orderOut(nil)
+        stageWindow?.close()
+        stageWindow = nil
+        stageDisplay = nil
+        display = nil // removes the display; meeting apps see it disappear
+        displayReady = false
+        zoomCenter = nil
+        zoomScale = 1
+        preview.clear()
     }
 
     func shutdown() {
@@ -144,8 +198,10 @@ final class AppModel: ObservableObject {
             window.orderFrontRegardless()
             window.stage.setCameraStyle(cameraStyle)
             stageWindow = window
+            if split { window.stage.setSplit(true) }
             if let session = camera.session, cameraOn { window.stage.showCamera(session) }
             updateLowerThird()
+            updateCard()
         }
         displayReady = true
     }
@@ -169,6 +225,10 @@ final class AppModel: ObservableObject {
     /// Puts a source on stage. Side by side, the stage shows your last two picks: the new one on the left
     /// and the one it replaces on the right.
     func select(_ source: Source, focus: Bool = true) {
+        if !isOn {
+            setOn(true)
+            if source == current { return } // powerOn already put it back
+        }
         if card != nil { hideCard() }
         if focus, case .window(let window) = source { WindowFocus.focus(window) }
         guard source != current else { return }
@@ -190,6 +250,7 @@ final class AppModel: ObservableObject {
 
     /// Side by side with `source` on the right.
     func showOnRight(_ source: Source) {
+        if !isOn { setOn(true) }
         if source == current {
             current = secondary ?? previous
         }
@@ -405,6 +466,7 @@ final class AppModel: ObservableObject {
     // MARK: Webcam
 
     func setCamera(_ on: Bool) {
+        if on, !isOn { setOn(true) }
         if on {
             camera.start { [weak self] session in
                 guard let self else { return }
@@ -631,6 +693,7 @@ final class AppModel: ObservableObject {
         case .previous: step(-1)
         case .next: step(1)
         case .refresh: Task { await refreshSources() }
+        case .power: toggleOn()
         case .split: toggleSplit()
         case .follow: follow.toggle()
         case .zoom: zoomOn.toggle()
