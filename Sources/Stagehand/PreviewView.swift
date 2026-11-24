@@ -24,6 +24,13 @@ final class PreviewView: NSView {
         CATransaction.commit()
     }
 
+    func clear() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        content.contents = nil
+        CATransaction.commit()
+    }
+
     func show(_ surface: IOSurface) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)

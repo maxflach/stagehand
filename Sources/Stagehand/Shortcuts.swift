@@ -88,7 +88,7 @@ struct KeyCombo: Codable, Hashable {
 enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case favorite1, favorite2, favorite3, favorite4, favorite5, favorite6, favorite7, favorite8, favorite9
     case previous, next, refresh
-    case split, follow, zoom, zoomIn, zoomOut
+    case power, split, follow, zoom, zoomIn, zoomOut
     case spotlight, highlight
     case camera, justMe
     case beRightBack, breakTime, nameTag
@@ -112,6 +112,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .previous: return "Previous favourite"
         case .next: return "Next favourite"
         case .refresh: return "Refresh the window list"
+        case .power: return "Stagehand on / off"
         case .split: return "Side by side on / off"
         case .follow: return "Follow mode on / off"
         case .zoom: return "Zoom on / off"
@@ -132,7 +133,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         if favoriteSlot != nil { return "Favourites" }
         switch self {
         case .previous, .next, .refresh: return "Favourites"
-        case .split, .follow, .zoom, .zoomIn, .zoomOut: return "Stage"
+        case .power, .split, .follow, .zoom, .zoomIn, .zoomOut: return "Stage"
         case .spotlight, .highlight: return "Pointer"
         case .camera, .justMe: return "Webcam"
         default: return "Cards"
@@ -150,6 +151,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .previous: return KeyCombo(kVK_LeftArrow)
         case .next: return KeyCombo(kVK_RightArrow)
         case .refresh: return KeyCombo(kVK_ANSI_R)
+        case .power: return KeyCombo(kVK_ANSI_O)
         case .split: return KeyCombo(kVK_ANSI_D)
         case .follow: return KeyCombo(kVK_ANSI_F)
         case .zoom: return KeyCombo(kVK_ANSI_Z)
